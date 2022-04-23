@@ -1,0 +1,23 @@
+
+
+
+syntax= "proto3";
+
+option java_multiple_files=true;
+
+
+
+service RateService{
+  rpc consumptionRate (RateRequest) returns (RateResponse) {};
+}
+
+message RateResponse {
+  float rate =1;
+}
+
+message RateRequest {
+  string raterequest = 1;
+}
+
+
+
