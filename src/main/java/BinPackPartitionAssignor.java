@@ -15,7 +15,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 
-public class BinPackPartitionAssignor extends AbstractAssignor implements Configurable {
+public class BinPackPartitionAssignor extends AbstractAssignor  {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BinPackPartitionAssignor.class);
 
@@ -23,9 +23,6 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
     private static boolean firstRebalancing = true;
 
 
-    private Properties consumerGroupProps;
-    private Properties metadataConsumerProps;
-    private KafkaConsumer<byte[], byte[]> metadataConsumer;
 
 
 
@@ -159,9 +156,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
     @Override
     public GroupAssignment assign(Cluster metadata, GroupSubscription subscriptions) {
 
-        if (metadataConsumer == null) {
-            metadataConsumer = new KafkaConsumer<>(metadataConsumerProps);
-        }
+
         memberToRate = new HashMap<>();
         final Set<String> allSubscribedTopics = new HashSet<>();
         final Map<String, List<String>> topicSubscriptions = new HashMap<>();
@@ -174,7 +169,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
             topicSubscriptions.put(subscriptionEntry.getKey(), topics);
         }
         final Map<String, List<TopicPartition>> topicpartitions =
-                readTopicPartitionLags(metadata, allSubscribedTopics);
+                readTopicPartition(metadata, allSubscribedTopics);
         Map<String, List<TopicPartition>> rawAssignments =
                 assign(topicpartitions, topicSubscriptions);
 
@@ -235,10 +230,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
 
 
         for (TopicPartition  p : partitionLags) {
-
-
             assignment.get(memberId).add(p);
-
             LOGGER.info(
                     "Assigned partition {}-{} to consumer {}",
                     p.topic(),
@@ -281,10 +273,6 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
         System.out.println("connected to server ");
         AssignmentResponse reply = assignmentServiceBlockingStub.getAssignment(request);
 
-
-
-
-
         System.out.println("We have the following consumers");
         for (Consumer c : reply.getConsumersList())
             System.out.println(c.getId());
@@ -299,14 +287,13 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
             }
         }
 
-
         return reply.getConsumersList();
 
     }
 
 
 
-    private Map<String, List<TopicPartition>> readTopicPartitionLags(
+    private Map<String, List<TopicPartition>> readTopicPartition(
             final Cluster metadata,
             final Set<String> allSubscribedTopics
     ) {
@@ -332,93 +319,9 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
 
 
 
-    static long computePartitionLag(
-            final OffsetAndMetadata partitionMetadata,
-            final long beginOffset,
-            final long endOffset,
-            final String autoOffsetResetMode
-    ) {
-        final long nextOffset;
-        if (partitionMetadata != null) {
-
-            nextOffset = partitionMetadata.offset();
-
-        } else {
-
-            // No committed offset for this partition, set based on auto.offset.reset
-            if (autoOffsetResetMode.equalsIgnoreCase("latest")) {
-                nextOffset = endOffset;
-            } else {
-                // assume earliest
-                nextOffset = beginOffset;
-            }
-        }
-        // The max() protects against the unlikely case when reading the partition end offset fails
-        // but reading the last committed offsets succeeds
-        return Long.max(endOffset - nextOffset, 0L);
-    }
 
 
-    static class TopicPartitionLag {
 
-        private final String topic;
-        private final int partition;
-        private final long lag;
-
-        TopicPartitionLag(String topic, int partition, long lag) {
-            this.topic = topic;
-            this.partition = partition;
-            this.lag = lag;
-        }
-
-        String getTopic() {
-            return topic;
-        }
-
-        int getPartition() {
-            return partition;
-        }
-
-        long getLag() {
-            return lag;
-        }
-
-    }
-
-    @Override
-    public void configure(Map<String, ?> configs) {
-        // Construct Properties from config map
-        consumerGroupProps = new Properties();
-        for (final Map.Entry<String, ?> prop : configs.entrySet()) {
-            consumerGroupProps.put(prop.getKey(), prop.getValue());
-        }
-
-        // group.id must be defined
-        final String groupId = consumerGroupProps.getProperty(ConsumerConfig.GROUP_ID_CONFIG);
-        if (groupId == null) {
-            throw new IllegalArgumentException(
-                    ConsumerConfig.GROUP_ID_CONFIG + " cannot be null when using "
-                            + ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG + "="
-                            + this.getClass().getName());
-        }
-
-        // Create a new consumer that can be used to get lag metadata for the consumer group
-        metadataConsumerProps = new Properties();
-        metadataConsumerProps.putAll(consumerGroupProps);
-        metadataConsumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        final String clientId = groupId + ".assignor";
-        metadataConsumerProps.put(ConsumerConfig.CLIENT_ID_CONFIG, clientId);
-
-        LOGGER.info(
-                "Configured LagBasedPartitionAssignor with values:\n"
-                        + "\tgroup.id = {}\n"
-                        + "\tclient.id = {}\n",
-                groupId,
-                clientId
-        );
-
-        LOGGER.info("creating the metadataconsumer inside the configure");
-    }
 
 
 
