@@ -11,6 +11,6 @@ ENV VERSION ${version}
 #COPY ./scripts/ /bin
 COPY ./src/main/resources/log4j2.properties /bin/log4j2.properties
 
-ADD target/consumer-1.0-SNAPSHOT.jar /
+ADD target/Assignor-1.0-SNAPSHOT.jar /
 
-CMD ["java","-jar" , "/consumer-1.0-SNAPSHOT.jar"]
+CMD ["java","-jar" , "/Assignor-1.0-SNAPSHOT.jar"]
