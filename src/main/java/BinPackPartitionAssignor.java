@@ -239,6 +239,31 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         }
     }
 
+
+    private static void doFirstRebalancing(
+            final Map<String, List<TopicPartition>> assignment,
+            final String topic,
+            final List<String> consumers,
+            final List<TopicPartition> partitions) {
+        if (consumers.isEmpty()) {
+            return;
+        }
+        // Track total lag assigned to each consumer (for the current topic)
+        String memberId = consumers.get(0);
+
+        LOGGER.info("Looks like all the assignment is going to {}", memberId);
+
+
+        for (TopicPartition  p : partitions) {
+            assignment.get(memberId).add(p);
+            LOGGER.info(
+                    "Assigned partition {}-{} to consumer {}",
+                    p.topic(),
+                    p.partition(),
+                    memberId);
+        }
+    }
+
     private static void assignController(
             final Map<String, List<TopicPartition>> assignment,
             final String topic,
@@ -250,7 +275,19 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         // Track total lag assigned to each consumer (for the current topic)
 
 
-        List<Consumer> asscons = simulateAssignment();
+        if(firstRebalancing){
+             doFirstRebalancing(
+             assignment, topic, consumers, partitionLags);
+             LOGGER.info("First rebalancing calling doFirstRebalancing");
+             firstRebalancing = false;
+             return;
+        }
+
+
+        //List<Consumer> asscons = simulateAssignment();
+
+        List<Consumer> asscons = callForAssignment();
+
 
         int kafkaconsindex = 0;
 
