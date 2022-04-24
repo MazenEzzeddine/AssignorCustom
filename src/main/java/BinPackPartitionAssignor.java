@@ -204,7 +204,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         //for each topic assign call assigntopic to perform lag-aware assignment per topic
         final Map<String, List<String>> consumersPerTopic = consumersPerTopic(subscriptions);
         for (Map.Entry<String, List<String>> topicEntry : consumersPerTopic.entrySet()) {
-            assignSingleton(
+            assignController(
                     assignment,
                     //topic
                     topicEntry.getKey(),
@@ -239,7 +239,39 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         }
     }
 
+    private static void assignController(
+            final Map<String, List<TopicPartition>> assignment,
+            final String topic,
+            final List<String> consumers,
+            final List<TopicPartition> partitionLags) {
+        if (consumers.isEmpty()) {
+            return;
+        }
+        // Track total lag assigned to each consumer (for the current topic)
 
+
+        List<Consumer> asscons = simulateAssignment();
+
+        int kafkaconsindex = 0;
+
+        for(Consumer c : asscons) {
+            List<TopicPartition> listtp = new ArrayList<>();
+            LOGGER.info("Assignning for consumer {}",  consumers.get(kafkaconsindex) );
+            for (Partition p : c.getAssignedPartitionsList()) {
+                TopicPartition tp = new TopicPartition(topic, p.getId());
+                listtp.add(tp);
+                LOGGER.info("Added partition {} to that consumer", tp.partition());
+            }
+            assignment.put(consumers.get(kafkaconsindex), listtp);
+
+
+            for (TopicPartition tp : listtp){
+                LOGGER.info("Assigned {} to consumer {}", tp.partition(), consumers.get(kafkaconsindex));
+            }
+            kafkaconsindex++;
+        }
+
+    }
 
 
     private static Map<String, List<String>> consumersPerTopic(Map<String, List<String>> subscriptions) {
@@ -288,6 +320,37 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         }
 
         return reply.getConsumersList();
+
+    }
+
+
+
+    private static List<Consumer>  simulateAssignment() {
+       Partition p1 =  Partition.newBuilder().setArrivalRate(11.0).setId(0).setLag(500L).build();
+       Partition p2 =  Partition.newBuilder().setArrivalRate(5.0).setId(1).setLag(500L).build();
+       Partition p3 =  Partition.newBuilder().setArrivalRate(6.0).setId(2).setLag(50L).build();
+
+      Consumer c1 =  Consumer.newBuilder().addAssignedPartitions(p1).addAssignedPartitions(p2)
+              .addAssignedPartitions(p3).build();
+
+        Partition p4 =  Partition.newBuilder().setArrivalRate(1.0).setId(3).setLag(60L).build();
+        Partition p5 =  Partition.newBuilder().setArrivalRate(12.0).setId(4).setLag(60L).build();
+
+
+        Consumer c2 =  Consumer.newBuilder().addAssignedPartitions(p4).addAssignedPartitions(p5)
+               .build();
+
+
+        List<Consumer> listc = new ArrayList<>();
+        listc.add(c1);
+        listc.add(c2);
+
+
+        return  listc;
+
+
+
+        //return reply.getConsumersList();
 
     }
 
