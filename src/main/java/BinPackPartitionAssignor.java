@@ -289,6 +289,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         List<Consumer> asscons = callForAssignment();
 
 
+
         int kafkaconsindex = 0;
 
         for(Consumer c : asscons) {
@@ -346,7 +347,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor  {
         for (Consumer c : reply.getConsumersList())
             System.out.println(c.getId());
 
-        System.out.println("We have the following Assignmenet");
+        System.out.println("We have the following Assignmnet");
 
         for (Consumer c : reply.getConsumersList()) {
             System.out.println("Consumer has the following Assignment "+ c.getId() );
