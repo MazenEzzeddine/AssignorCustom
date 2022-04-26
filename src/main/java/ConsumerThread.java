@@ -40,7 +40,7 @@ public class ConsumerThread implements Runnable {
         consumer.subscribe(Collections.singletonList(config.getTopic()));
         log.info("Subscribed to topic {}", config.getTopic());
 
-        int warmup = 0;
+       // int warmup = 0;
 
         while (true) {
             Long timeBeforePolling = System.currentTimeMillis();
