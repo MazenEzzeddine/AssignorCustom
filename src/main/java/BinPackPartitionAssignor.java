@@ -15,7 +15,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 
-public class BinPackPartitionAssignor extends AbstractAssignor implements Configurable {
+public class BinPackPartitionAssignor extends AbstractAssignor  {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(BinPackPartitionAssignor.class);
 
@@ -23,9 +23,6 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
     private static boolean firstRebalancing = true;
 
 
-    private Properties consumerGroupProps;
-    private Properties metadataConsumerProps;
-    private KafkaConsumer<byte[], byte[]> metadataConsumer;
 
 
 
@@ -159,9 +156,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
     @Override
     public GroupAssignment assign(Cluster metadata, GroupSubscription subscriptions) {
 
-        if (metadataConsumer == null) {
-            metadataConsumer = new KafkaConsumer<>(metadataConsumerProps);
-        }
+
         memberToRate = new HashMap<>();
         final Set<String> allSubscribedTopics = new HashSet<>();
         final Map<String, List<String>> topicSubscriptions = new HashMap<>();
@@ -173,10 +168,10 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
             allSubscribedTopics.addAll(topics);
             topicSubscriptions.put(subscriptionEntry.getKey(), topics);
         }
-        final Map<String, List<TopicPartitionLag>> topicLags =
-                readTopicPartitionLags(metadata, allSubscribedTopics);
+        final Map<String, List<TopicPartition>> topicpartitions =
+                readTopicPartition(metadata, allSubscribedTopics);
         Map<String, List<TopicPartition>> rawAssignments =
-                assign(topicLags, topicSubscriptions);
+                assign(topicpartitions, topicSubscriptions);
 
         // this class has maintains no user data, so just wrap the results
         Map<String, Assignment> assignments = new HashMap<>();
@@ -190,6 +185,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
     void printPreviousAssignments(String memberid, Subscription sub) {
 
         MemberData md =  memberData(sub);
+
         memberToRate.put(memberid,md.maxConsumptionRate);
         LOGGER.info("MaxConsumptionRate {} for {}", memberid, md.maxConsumptionRate);
     }
@@ -197,7 +193,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
 
     //for each consumer returns the list of topic partitions assigned to it.
     static Map<String, List<TopicPartition>> assign(
-            Map<String, List<TopicPartitionLag>> partitionLagPerTopic,
+            Map<String, List<TopicPartition>> topicpartitions,
             Map<String, List<String>> subscriptions
     ) {
         // each memmber/consumer to its propsective assignment
@@ -208,14 +204,13 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
         //for each topic assign call assigntopic to perform lag-aware assignment per topic
         final Map<String, List<String>> consumersPerTopic = consumersPerTopic(subscriptions);
         for (Map.Entry<String, List<String>> topicEntry : consumersPerTopic.entrySet()) {
-            assignSingleton(
+            assignController(
                     assignment,
                     //topic
                     topicEntry.getKey(),
                     //consumers
                     topicEntry.getValue(),
-                    partitionLagPerTopic.getOrDefault(topicEntry.getKey(), Collections.emptyList())
-            );
+                    topicpartitions.get(topicEntry.getKey()));
         }
         return assignment;
     }
@@ -224,7 +219,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
             final Map<String, List<TopicPartition>> assignment,
             final String topic,
             final List<String> consumers,
-            final List<TopicPartitionLag> partitionLags) {
+            final List<TopicPartition> partitionLags) {
         if (consumers.isEmpty()) {
             return;
         }
@@ -234,82 +229,87 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
         LOGGER.info("Looks like all the assignment is going to {}", memberId);
 
 
-        for (TopicPartitionLag partition : partitionLags) {
-
-
-            TopicPartition p =  new TopicPartition(partition.getTopic(), partition.getPartition());
+        for (TopicPartition  p : partitionLags) {
             assignment.get(memberId).add(p);
-
             LOGGER.info(
                     "Assigned partition {}-{} to consumer {}",
-                    partition.getTopic(),
-                    partition.getPartition(),
+                    p.topic(),
+                    p.partition(),
                     memberId);
         }
     }
 
-    /*private static void assignSingleton(
+
+    private static void doFirstRebalancing(
             final Map<String, List<TopicPartition>> assignment,
             final String topic,
             final List<String> consumers,
-            final List<TopicPartitionLag> partitionLags) {
+            final List<TopicPartition> partitions) {
         if (consumers.isEmpty()) {
             return;
         }
         // Track total lag assigned to each consumer (for the current topic)
-        final Map<String, Long> consumerTotalLags = new HashMap<>(consumers.size());
-        for (String memberId : consumers) {
-            consumerTotalLags.put(memberId, 0L);
-            LOGGER.info("member id {} has the following rate {}", memberId, memberToRate.get(memberId));
-        }
-        // Track total number of partitions assigned to each consumer (for the current topic)
-        final Map<String, Integer> consumerTotalPartitions = new HashMap<>(consumers.size());
-        for (String memberId : consumers) {
-            consumerTotalPartitions.put(memberId, 0);}
-        // Assign partitions in descending order of lag, then ascending by partition
-        partitionLags.sort((p1, p2) -> {
-            // If lag is equal, lowest partition id first
-            if (p1.getLag() == p2.getLag()) {
-                return Integer.compare(p1.getPartition(), p2.getPartition());
-            }
-            // Highest lag first
-            return Long.compare(p2.getLag(), p1.getLag());
-        });
+        String memberId = consumers.get(0);
 
-        for (TopicPartitionLag partition : partitionLags) {
-            // Assign to the consumer with least number of partitions, then smallest total lag, then smallest id
-            // returns the consumer with lowest assigned partitions, if all assigned partitions equal returns the min total lag
-            final String memberId = Collections
-                    .min(consumerTotalLags.entrySet(), (c1, c2) -> {
-                        // Lowest partition count first
-                        final int comparePartitionCount = Integer.compare(consumerTotalPartitions.get(c1.getKey()),
-                                consumerTotalPartitions.get(c2.getKey()));
-                        if (comparePartitionCount != 0) {
-                            return comparePartitionCount;}
-                        // If partition count is equal, lowest total lag first
-                        final int compareTotalLags = Long.compare(c1.getValue(), c2.getValue());
-                        if (compareTotalLags != 0) {
-                            return compareTotalLags;}
-                        // If total lag is equal, lowest consumer id first
-                        return c1.getKey().compareTo(c2.getKey());
-                    }).getKey();
+        LOGGER.info("Looks like all the assignment is going to {}", memberId);
 
-            TopicPartition p =  new TopicPartition(partition.getTopic(), partition.getPartition());
+
+        for (TopicPartition  p : partitions) {
             assignment.get(memberId).add(p);
-            consumerTotalLags.put(memberId, consumerTotalLags.getOrDefault(memberId, 0L) + partition.getLag());
-            consumerTotalPartitions.put(memberId, consumerTotalPartitions.getOrDefault(memberId, 0) + 1);
             LOGGER.info(
-                    "Assigned partition {}-{} to consumer {}.  partition_lag={}, consumer_current_total_lag={}",
-                    partition.getTopic(),
-                    partition.getPartition(),
-                    memberId,
-                    partition.getLag(),
-                    consumerTotalLags.get(memberId));
+                    "Assigned partition {}-{} to consumer {}",
+                    p.topic(),
+                    p.partition(),
+                    memberId);
         }
     }
 
-*/
+    private static void assignController(
+            final Map<String, List<TopicPartition>> assignment,
+            final String topic,
+            final List<String> consumers,
+            final List<TopicPartition> partitionLags) {
+        if (consumers.isEmpty()) {
+            return;
+        }
+        // Track total lag assigned to each consumer (for the current topic)
 
+
+        if(firstRebalancing){
+             doFirstRebalancing(
+             assignment, topic, consumers, partitionLags);
+             LOGGER.info("First rebalancing calling doFirstRebalancing");
+             firstRebalancing = false;
+             return;
+        }
+
+
+        //List<Consumer> asscons = simulateAssignment();
+
+        List<Consumer> asscons = callForAssignment();
+
+
+
+        int kafkaconsindex = 0;
+
+        for(Consumer c : asscons) {
+            List<TopicPartition> listtp = new ArrayList<>();
+            LOGGER.info("Assignning for consumer {}",  consumers.get(kafkaconsindex) );
+            for (Partition p : c.getAssignedPartitionsList()) {
+                TopicPartition tp = new TopicPartition(topic, p.getId());
+                listtp.add(tp);
+                LOGGER.info("Added partition {} to that consumer", tp.partition());
+            }
+            assignment.put(consumers.get(kafkaconsindex), listtp);
+
+
+            for (TopicPartition tp : listtp){
+                LOGGER.info("Assigned {} to consumer {}", tp.partition(), consumers.get(kafkaconsindex));
+            }
+            kafkaconsindex++;
+        }
+
+    }
 
 
     private static Map<String, List<String>> consumersPerTopic(Map<String, List<String>> subscriptions) {
@@ -343,15 +343,11 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
         System.out.println("connected to server ");
         AssignmentResponse reply = assignmentServiceBlockingStub.getAssignment(request);
 
-
-
-
-
         System.out.println("We have the following consumers");
         for (Consumer c : reply.getConsumersList())
             System.out.println(c.getId());
 
-        System.out.println("We have the following Assignmenet");
+        System.out.println("We have the following Assignmnet");
 
         for (Consumer c : reply.getConsumersList()) {
             System.out.println("Consumer has the following Assignment "+ c.getId() );
@@ -361,19 +357,49 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
             }
         }
 
-
         return reply.getConsumersList();
 
     }
 
 
 
-    private Map<String, List<TopicPartitionLag>> readTopicPartitionLags(
+    private static List<Consumer>  simulateAssignment() {
+       Partition p1 =  Partition.newBuilder().setArrivalRate(11.0).setId(0).setLag(500L).build();
+       Partition p2 =  Partition.newBuilder().setArrivalRate(5.0).setId(1).setLag(500L).build();
+       Partition p3 =  Partition.newBuilder().setArrivalRate(6.0).setId(2).setLag(50L).build();
+
+      Consumer c1 =  Consumer.newBuilder().addAssignedPartitions(p1).addAssignedPartitions(p2)
+              .addAssignedPartitions(p3).build();
+
+        Partition p4 =  Partition.newBuilder().setArrivalRate(1.0).setId(3).setLag(60L).build();
+        Partition p5 =  Partition.newBuilder().setArrivalRate(12.0).setId(4).setLag(60L).build();
+
+
+        Consumer c2 =  Consumer.newBuilder().addAssignedPartitions(p4).addAssignedPartitions(p5)
+               .build();
+
+
+        List<Consumer> listc = new ArrayList<>();
+        listc.add(c1);
+        listc.add(c2);
+
+
+        return  listc;
+
+
+
+        //return reply.getConsumersList();
+
+    }
+
+
+
+    private Map<String, List<TopicPartition>> readTopicPartition(
             final Cluster metadata,
             final Set<String> allSubscribedTopics
     ) {
         // metadataConsumer.enforceRebalance();
-        final Map<String, List<TopicPartitionLag>> topicPartitionLags = new HashMap<>();
+        Map<String, List<TopicPartition>> topicpartitions = new HashMap<>();
         for (String topic : allSubscribedTopics) {
 
             final List<PartitionInfo> topicPartitionInfo = metadata.partitionsForTopic(topic);
@@ -383,123 +409,20 @@ public class BinPackPartitionAssignor extends AbstractAssignor implements Config
                         (PartitionInfo p) -> new TopicPartition(p.topic(), p.partition())
                 ).collect(Collectors.toList());
 
-                topicPartitionLags.put(topic, new ArrayList<>());
 
-                // Get begin/end offset in each partition
-                final Map<TopicPartition, Long> topicBeginOffsets = metadataConsumer.beginningOffsets(topicPartitions);
-                final Map<TopicPartition, Long> topicEndOffsets = metadataConsumer.endOffsets(topicPartitions);
-                //get last committed offset
-                Map<TopicPartition, OffsetAndMetadata> partitionMetadata =
-                        metadataConsumer.committed(new HashSet<>(topicPartitions));
-                // Determine lag for each partition
-                for (TopicPartition partition : topicPartitions) {
+                topicpartitions.put(topic, topicPartitions);
 
-                    final String autoOffsetResetMode = consumerGroupProps
-                            .getProperty(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "latest");
-                    final long lag = computePartitionLag(
-                            partitionMetadata.get(partition),
-                            topicBeginOffsets.getOrDefault(partition, 0L),
-                            topicEndOffsets.getOrDefault(partition, 0L),
-                            autoOffsetResetMode
-                    );
-                    topicPartitionLags.get(topic).add(new TopicPartitionLag(topic, partition.partition(), lag));
-                }
-            } else {
-                LOGGER.info("Skipping assignment for topic {} since no metadata is available", topic);
             }
         }
-        return topicPartitionLags;
-    }
-
-
-
-    static long computePartitionLag(
-            final OffsetAndMetadata partitionMetadata,
-            final long beginOffset,
-            final long endOffset,
-            final String autoOffsetResetMode
-    ) {
-        final long nextOffset;
-        if (partitionMetadata != null) {
-
-            nextOffset = partitionMetadata.offset();
-
-        } else {
-
-            // No committed offset for this partition, set based on auto.offset.reset
-            if (autoOffsetResetMode.equalsIgnoreCase("latest")) {
-                nextOffset = endOffset;
-            } else {
-                // assume earliest
-                nextOffset = beginOffset;
-            }
-        }
-        // The max() protects against the unlikely case when reading the partition end offset fails
-        // but reading the last committed offsets succeeds
-        return Long.max(endOffset - nextOffset, 0L);
-    }
-
-
-    static class TopicPartitionLag {
-
-        private final String topic;
-        private final int partition;
-        private final long lag;
-
-        TopicPartitionLag(String topic, int partition, long lag) {
-            this.topic = topic;
-            this.partition = partition;
-            this.lag = lag;
-        }
-
-        String getTopic() {
-            return topic;
-        }
-
-        int getPartition() {
-            return partition;
-        }
-
-        long getLag() {
-            return lag;
-        }
+        return topicpartitions;
 
     }
 
-    @Override
-    public void configure(Map<String, ?> configs) {
-        // Construct Properties from config map
-        consumerGroupProps = new Properties();
-        for (final Map.Entry<String, ?> prop : configs.entrySet()) {
-            consumerGroupProps.put(prop.getKey(), prop.getValue());
-        }
 
-        // group.id must be defined
-        final String groupId = consumerGroupProps.getProperty(ConsumerConfig.GROUP_ID_CONFIG);
-        if (groupId == null) {
-            throw new IllegalArgumentException(
-                    ConsumerConfig.GROUP_ID_CONFIG + " cannot be null when using "
-                            + ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG + "="
-                            + this.getClass().getName());
-        }
 
-        // Create a new consumer that can be used to get lag metadata for the consumer group
-        metadataConsumerProps = new Properties();
-        metadataConsumerProps.putAll(consumerGroupProps);
-        metadataConsumerProps.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
-        final String clientId = groupId + ".assignor";
-        metadataConsumerProps.put(ConsumerConfig.CLIENT_ID_CONFIG, clientId);
 
-        LOGGER.info(
-                "Configured LagBasedPartitionAssignor with values:\n"
-                        + "\tgroup.id = {}\n"
-                        + "\tclient.id = {}\n",
-                groupId,
-                clientId
-        );
 
-        LOGGER.info("creating the metadataconsumer inside the configure");
-    }
+
 
 
 
