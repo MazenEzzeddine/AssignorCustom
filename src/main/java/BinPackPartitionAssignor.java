@@ -203,29 +203,7 @@ public class BinPackPartitionAssignor extends AbstractAssignor {
         return assignment;
     }
 
-    private static void assignSingleton(
-            final Map<String, List<TopicPartition>> assignment,
-            final String topic,
-            final List<String> consumers,
-            final List<TopicPartition> partitionLags) {
-        if (consumers.isEmpty()) {
-            return;
-        }
-        // Track total lag assigned to each consumer (for the current topic)
-        String memberId = consumers.get(0);
 
-        LOGGER.info("Looks like all the assignment is going to {}", memberId);
-
-
-        for (TopicPartition p : partitionLags) {
-            assignment.get(memberId).add(p);
-            LOGGER.info(
-                    "Assigned partition {}-{} to consumer {}",
-                    p.topic(),
-                    p.partition(),
-                    memberId);
-        }
-    }
 
 
     private static void doFirstRebalancing(
@@ -272,24 +250,48 @@ public class BinPackPartitionAssignor extends AbstractAssignor {
         }
 
         //List<Consumer> asscons = simulateAssignment();
+        for(String c: consumers) {
+            LOGGER.info("We have the following consumers  out of Kafka {}", c);
+        }
 
         List<Consumer> asscons = callForAssignment();
         int kafkaconsindex = 0;
+        int controllerconsindex = 0;
 
-        for (Consumer c : asscons) {
+        /*for (Consumer c : asscons) {
+            LOGGER.info("consumer out of controller  {}", c);
             List<TopicPartition> listtp = new ArrayList<>();
-            LOGGER.info("Assigning for consumer {}", consumers.get(kafkaconsindex));
+            LOGGER.info("Assigning for kafka consumer {}", consumers.get(kafkaconsindex));
             for (Partition p : c.getAssignedPartitionsList()) {
                 TopicPartition tp = new TopicPartition(topic, p.getId());
                 listtp.add(tp);
-                LOGGER.info("Added partition {} to that consumer", tp.partition());
+                LOGGER.info("Added partition {} to  consumer {}", tp.partition(), c.getId());
             }
             assignment.put(consumers.get(kafkaconsindex), listtp);
 
             for (TopicPartition tp : listtp) {
-                LOGGER.info("Assigned {} to consumer {}", tp.partition(), consumers.get(kafkaconsindex));
+                LOGGER.info("Assigned partition {} to consumer {}", tp.partition(), consumers.get(kafkaconsindex));
             }
             kafkaconsindex++;
+        }*/
+
+
+        for (String co : consumers) {
+            LOGGER.info("consumer out of controller  {}", asscons.get(controllerconsindex));
+            List<TopicPartition> listtp = new ArrayList<>();
+            LOGGER.info("Assigning for kafka consumer {}", co);
+            for (Partition p : asscons.get(controllerconsindex).getAssignedPartitionsList()) {
+                TopicPartition tp = new TopicPartition(topic, p.getId());
+                listtp.add(tp);
+                LOGGER.info("Added partition {} to  consumer {}", tp.partition(), asscons.get(controllerconsindex).getId());
+            }
+            assignment.put(co, listtp);
+
+            for (TopicPartition tp : listtp) {
+                LOGGER.info("Assigned partition {} to consumer {}", tp.partition(), co);
+            }
+            //kafkaconsindex++;
+            controllerconsindex++;
         }
 
     }
@@ -329,9 +331,9 @@ public class BinPackPartitionAssignor extends AbstractAssignor {
         System.out.println("We have the following Assignmnet");
 
         for (Consumer c : reply.getConsumersList()) {
-            System.out.println("Consumer has the following Assignment " + c.getId());
+            System.out.println("Consumer {} has the following Assignment " + c.getId());
             for (Partition p : c.getAssignedPartitionsList()) {
-                System.out.println("partition " + p.getId() + " " + p.getArrivalRate() + " " + p.getLag());
+                System.out.println("partition " + p.getId());
 
             }
         }
